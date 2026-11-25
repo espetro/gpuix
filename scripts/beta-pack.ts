@@ -23,7 +23,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 const RELEASE_TAG = process.env.BETA_RELEASE_TAG ?? "tray-beta";
 const REPO = process.env.BETA_REPO; // owner/repo, required for asset URLs
@@ -48,20 +48,32 @@ function assetUrl(name: string): string {
   return `https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${name}`;
 }
 
-function pack(dir: string, out: string): string {
+function pack(dir: string, outDir: string): string {
   // --ignore-scripts keeps prepublishOnly guards and napi hooks out of the
   // pack step; we only ever pack, never publish.
+  // bun writes the tarball relative to the packed directory unless given
+  // an absolute --destination, and the flag is --destination (npm's --out
+  // is silently ignored), so pass absolute and read it back from there.
+  // Pack into a private directory so a shared output dir never holds two
+  // tarballs at once, then move it to outDir.
+  const staging = resolve(outDir, ".staging");
+  rmSync(staging, { recursive: true, force: true });
+  mkdirSync(staging, { recursive: true });
   const res = spawnSync(
     "bun",
-    ["pm", "pack", "--ignore-scripts", `--out=${out}`],
+    ["pm", "pack", "--ignore-scripts", "--destination", staging],
     { cwd: dir, stdio: "inherit", shell: process.platform === "win32" },
   );
   if (res.status !== 0) {
     throw new Error(`bun pm pack failed in ${dir}`);
   }
-  const tgz = readdirSync(out).filter((f) => f.endsWith(".tgz"));
-  if (tgz.length !== 1) throw new Error(`expected one tarball in ${out}, found ${tgz.join(", ")}`);
-  return join(out, tgz[0]);
+  const tgz = readdirSync(staging).filter((f) => f.endsWith(".tgz"));
+  if (tgz.length !== 1) throw new Error(`expected one tarball in ${staging}, found ${tgz.join(", ")}`);
+  const dest = join(resolve(outDir), tgz[0]);
+  rmSync(dest, { force: true });
+  spawnSync("mv", [join(staging, tgz[0]), dest], { stdio: "inherit" });
+  rmSync(staging, { recursive: true, force: true });
+  return dest;
 }
 
 function main() {
@@ -113,7 +125,7 @@ function main() {
     writeFileSync(join(dir, npmPackage, "package.json"), JSON.stringify(platformPkg, null, 2) + "\n");
 
     const asset = `gpuix-native-${target}-beta.tgz`;
-    const file = pack(join(dir, npmPackage), join("..", ".."));
+    const file = pack(join(dir, npmPackage), PACK_OUT);
     // pack writes <out>/<name>-<version>.tgz; rename to the stable asset name
     rmSync(join(PACK_OUT, "beta"), { recursive: true, force: true });
     const packedName = basename(file);
@@ -143,7 +155,7 @@ function main() {
   writeFileSync(join(rootDir, "package.json"), JSON.stringify(rootPkg, null, 2) + "\n");
 
   const rootAsset = "gpuix-native-beta.tgz";
-  const rootFile = pack(rootDir, join(".."));
+  const rootFile = pack(rootDir, PACK_OUT);
   const stableRoot = join(PACK_OUT, rootAsset);
   rmSync(stableRoot, { force: true });
   spawnSync("mv", [rootFile, stableRoot], { stdio: "inherit" });
@@ -178,7 +190,7 @@ function main() {
     writeFileSync(join(outDir, "package.json"), JSON.stringify(rewritten, null, 2) + "\n");
 
     const asset = `gpuix-${adapter}-beta.tgz`;
-    const file = pack(outDir, join(".."));
+    const file = pack(outDir, PACK_OUT);
     const stable = join(PACK_OUT, asset);
     rmSync(stable, { force: true });
     spawnSync("mv", [file, stable], { stdio: "inherit" });
