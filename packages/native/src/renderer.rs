@@ -41,6 +41,7 @@ use crate::retained_tree::{RetainedTree, StyleTable};
 use crate::style::StyleDesc;
 use crate::text::{selectable_text, selection_frame_reset, SharedSelection};
 use crate::theme::Theme;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use crate::tray::{TrayMenuItem as GpuixTrayMenuItem, TrayOptions as GpuixTrayOptions};
 
 /// The Window menu items act on the focused window, and the root element is the
@@ -2060,6 +2061,7 @@ impl GpuixRenderer {
     /// Tray events do not carry a tray identity, so there is one tray per
     /// process; multi-tray is out of scope.
     #[napi]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn create_tray(&self, options: GpuixTrayOptions) -> Result<bool> {
         if TRAY_CREATED.swap(true, std::sync::atomic::Ordering::AcqRel) {
             return Ok(false);
@@ -2098,6 +2100,7 @@ impl GpuixRenderer {
     ///
     /// Menu item ids are strings; native code never holds a JS callback.
     #[napi]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn set_tray_menu(&self, items: Vec<GpuixTrayMenuItem>) -> Result<()> {
         let items: Vec<gpui::TrayMenuItem> = items
             .into_iter()
@@ -2115,6 +2118,7 @@ impl GpuixRenderer {
     /// Replace the text shown while the pointer hovers over the tray item.
     /// `null` clears it. This is the only label a Windows tray item has.
     #[napi]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn set_tray_tooltip(&self, tooltip: Option<String>) -> Result<()> {
         let tooltip = tooltip.map(gpui::SharedString::from);
         self.update_app(move |_cx| {
@@ -2129,6 +2133,7 @@ impl GpuixRenderer {
     /// Replace the text shown beside the tray item's icon. `null` clears it.
     /// macOS only: Windows and Linux have no equivalent and ignore it.
     #[napi]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn set_tray_title(&self, title: Option<String>) -> Result<()> {
         let title = title.map(gpui::SharedString::from);
         self.update_app(move |_cx| {
@@ -2143,6 +2148,7 @@ impl GpuixRenderer {
     /// Remove the tray item from the system. A later `createTray` may create
     /// a new one.
     #[napi]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn remove_tray(&self) -> Result<()> {
         self.update_app(move |_cx| {
             // Dropping TrayHandle removes the item; that is GPUI's own
@@ -2161,6 +2167,7 @@ impl GpuixRenderer {
     /// GPUI drains tray events on the app/UI thread and calls the handler
     /// there; the ThreadsafeFunction is the only thing that crosses threads.
     #[napi(ts_args_type = "callback: (event: TrayEvent) => void")]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn on_tray_event(
         &self,
         callback: Function<crate::tray::TrayEventPayload, ()>,
