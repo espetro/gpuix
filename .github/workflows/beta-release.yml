@@ -1,0 +1,195 @@
+# Fork-only rolling beta release for the `beta/tray` branch.
+#
+# NOT part of the upstream tray PR or the npm release path. This workflow
+# builds the four native targets, packages cross-platform tarballs in one
+# Linux job (see scripts/beta-pack.ts for the dependency-identity chain),
+# and uploads them with --clobber to a rolling prerelease tagged
+# `tray-beta`. Nothing is published to npm.
+#
+# Requires no secrets beyond GITHUB_TOKEN.
+
+name: beta-release
+
+on:
+  push:
+    branches:
+      - beta/tray
+
+concurrency:
+  group: beta-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_NAME: gpuix-native
+  MACOSX_DEPLOYMENT_TARGET: "10.13"
+  BETA_REPO: ${{ github.repository }}
+  BETA_RELEASE_TAG: tray-beta
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same targets as CI. Keep in sync with packages/native/package.json
+        # napi.targets.
+        settings:
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            build: bun run build
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build: bun run build:release
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            build: bun run build
+          - host: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            build: bun run build
+    name: build - ${{ matrix.settings.target }}
+    runs-on: ${{ matrix.settings.host }}
+    defaults:
+      run:
+        working-directory: packages/native
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.settings.target }}
+          cache: false
+          rustflags: ""
+
+      - name: Install Metal toolchain
+        if: contains(matrix.settings.target, 'apple-darwin')
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      - name: Configure Windows ARM64 Clang
+        if: matrix.settings.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+          $llvm = Join-Path $vs 'VC\Tools\Llvm\ARM64\bin'
+          if (!(Test-Path "$llvm\clang.exe")) { throw 'Visual Studio ARM64 Clang is missing' }
+          $llvm | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/native/target/
+          key: beta-${{ matrix.settings.target }}-cargo-${{ hashFiles('packages/native/Cargo.lock') }}
+          restore-keys: |
+            beta-${{ matrix.settings.target }}-cargo-
+
+      - name: Install Linux dependencies
+        if: contains(matrix.settings.target, 'linux')
+        working-directory: .
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            gcc g++ clang \
+            libfontconfig-dev \
+            libwayland-dev \
+            libxkbcommon-x11-dev \
+            libx11-xcb-dev \
+            libssl-dev \
+            libzstd-dev \
+            libvulkan1 \
+            vulkan-validationlayers
+
+      - name: Install dependencies
+        working-directory: .
+        run: bun install
+
+      # The target must reach napi, not the final tsc command in the build script.
+      - name: Build native
+        run: ${{ matrix.settings.build }}
+        shell: bash
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.settings.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.settings.target }}
+          path: packages/native/${{ env.APP_NAME }}.*.node
+          retention-days: 3
+          if-no-files-found: error
+
+  package:
+    name: package and upload
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      # Adapter tarballs carry their dist/ output, so build them here first.
+      - name: Build adapters
+        run: |
+          bun run build:react
+          bun run build:solid
+
+      - name: Download platform binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bindings-*
+          merge-multiple: true
+          path: packages/native/artifacts
+
+      # `napi artifacts` copies every gpuix-native.<target>.node from
+      # artifacts/ into the package root, which is the layout
+      # scripts/beta-pack.ts expects.
+      - name: Stage binaries
+        working-directory: packages/native
+        run: |
+          bunx napi artifacts --package-manager bun
+          ls -l *.node
+
+      - name: Pack beta tarballs
+        working-directory: packages/native
+        run: bun ../../scripts/beta-pack.ts
+        env:
+          BETA_REPO: ${{ github.repository }}
+          BETA_RELEASE_TAG: tray-beta
+          BETA_VERSION_SUFFIX: ${{ github.sha }}
+
+      - name: Create or update rolling prerelease
+        run: |
+          gh release view tray-beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create tray-beta --repo "$GITHUB_REPOSITORY" \
+                 --title "GPUIX tray beta" \
+                 --notes "Rolling prerelease. Assets are replaced in place on every push to beta/tray. See BETA.md." \
+                 --prerelease --target beta/tray
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Upload assets (clobber)
+        working-directory: packages/native
+        run: |
+          gh release upload tray-beta \
+            beta-dist/gpuix-native-beta.tgz \
+            beta-dist/gpuix-native-aarch64-apple-darwin-beta.tgz \
+            beta-dist/gpuix-native-x86_64-unknown-linux-gnu-beta.tgz \
+            beta-dist/gpuix-native-x86_64-pc-windows-msvc-beta.tgz \
+            beta-dist/gpuix-native-aarch64-pc-windows-msvc-beta.tgz \
+            beta-dist/gpuix-react-beta.tgz \
+            beta-dist/gpuix-solid-beta.tgz \
+            --clobber --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
