@@ -3,13 +3,14 @@
  *
  * Validates the interactive pieces a small desktop app needs: keyboard-driven
  * text input, pointer events, conditional rendering, scrolling layout, and
- * repeated state updates.
+ * repeated state updates. It also creates a process-wide tray item whose
+ * title, tooltip, and menu reflect the todo state.
  *
  * Run: bun todo.tsx
  */
 
-import React, { useMemo, useState } from 'react'
-import { render } from '@gpuix/react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { render, useGpuix } from '@gpuix/react'
 
 type Todo = {
   id: number
@@ -202,12 +203,42 @@ function TodoRow({
 }
 
 function TodoApp() {
+  const { renderer } = useGpuix()
   const [todos, setTodos] = useState(initialTodos)
   const [draft, setDraft] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [nextId, setNextId] = useState(4)
+  const [trayCreated, setTrayCreated] = useState(false)
+  const [lastTrayEvent, setLastTrayEvent] = useState('none')
 
-  const activeCount = todos.filter(todo => !todo.done).length
+  useEffect(() => {
+    if (!renderer) return
+    const created = renderer.createTray?.({ title: '✓', tooltip: 'GPUIX Todo Validation' }) ?? false
+    setTrayCreated(created)
+    if (!created) return
+
+    renderer.onTrayEvent?.(event => {
+      if (event.type === 'menuItem') {
+        setLastTrayEvent(`menu:${event.id}`)
+        if (event.id === 'open') renderer.activateWindow?.()
+        if (event.id.startsWith('complete-')) {
+          const id = Number(event.id.slice('complete-'.length))
+          setTodos(current => current.map(todo => (todo.id === id ? { ...todo, done: true } : todo)))
+        }
+        if (event.id === 'quit') renderer.quit?.()
+      } else {
+        setLastTrayEvent(event.type)
+        renderer.activateWindow?.()
+      }
+    })
+
+    return () => {
+      renderer.removeTray?.()
+    }
+  }, [renderer])
+
+  const activeTodos = todos.filter(todo => !todo.done)
+  const activeCount = activeTodos.length
   const completedCount = todos.length - activeCount
   const counts = useMemo(
     () => ({ all: todos.length, active: activeCount, completed: completedCount }),
@@ -219,6 +250,30 @@ function TodoApp() {
     if (filter === 'completed') return todo.done
     return true
   })
+
+  useEffect(() => {
+    if (!renderer || !trayCreated) return
+    renderer.setTrayTitle?.(`✓ ${activeCount}`)
+    renderer.setTrayTooltip?.(`${activeCount} active · ${completedCount} completed`)
+    const visibleTaskItems = activeTodos.slice(0, 6).map(todo => ({
+      id: `complete-${todo.id}`,
+      label: `○ ${todo.title}`,
+    }))
+    renderer.setTrayMenu?.([
+      { id: 'open', label: 'Open app' },
+      { id: 'summary', label: `${activeCount} active · ${completedCount} completed`, enabled: false },
+      ...(activeTodos.length
+        ? [
+            { id: 'tasks-heading', label: 'Active tasks — choose one to complete it', enabled: false },
+            ...visibleTaskItems,
+          ]
+        : [{ id: 'no-tasks', label: 'No active tasks', enabled: false }]),
+      ...(activeTodos.length > 6
+        ? [{ id: 'more-tasks', label: `${activeTodos.length - 6} more active tasks`, enabled: false }]
+        : []),
+      { id: 'quit', label: 'Quit' },
+    ])
+  }, [renderer, trayCreated, activeCount, completedCount, activeTodos])
 
   const addTodo = () => {
     const title = draft.trim()
@@ -295,9 +350,6 @@ function TodoApp() {
             value={draft}
             placeholder="Add a validation task"
             onChange={event => setDraft(event.value ?? '')}
-            onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === 'enter') addTodo()
-            }}
             style={{
               flexGrow: 1,
               minWidth: 0,
@@ -356,7 +408,8 @@ function TodoApp() {
         </div>
 
         <div style={{ color: colors.faint, fontSize: 11 }}>
-          Validates input, buttons, conditional rows, scrolling, and repeated React state updates.
+          Tray: {trayCreated ? `active · last event ${lastTrayEvent}` : 'unavailable'} · input, buttons, rows,
+          scrolling, and state updates are also exercised.
         </div>
       </div>
     </div>
@@ -368,4 +421,5 @@ render(<TodoApp />, {
   width: 760,
   height: 680,
   focus: process.env.GPUIX_BACKGROUND !== '1',
+  quitMode: 'explicit',
 })
