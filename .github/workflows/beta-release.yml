@@ -39,7 +39,10 @@ jobs:
           - host: macos-latest
             target: aarch64-apple-darwin
             build: bun run build
-          - host: ubuntu-latest
+          # Build Linux on the oldest supported Ubuntu runner so the
+          # binary does not require the newest runner glibc. ubuntu-latest
+          # produced a binary requiring GLIBC_2.43; Debian 13 has 2.41.
+          - host: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             build: bun run build:release
           - host: windows-latest
