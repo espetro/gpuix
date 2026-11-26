@@ -2067,31 +2067,56 @@ impl GpuixRenderer {
             return Ok(false);
         }
         let options = options.into_gpui();
-        let (response, receiver) = sync_channel(1);
-        // `update_app` returning Err must not leave `TRAY_CREATED` set, or a
-        // failed first call would block every later one.
-        if self
-            .update_app(move |cx| {
-                // Runs on the GPUI app/UI thread, so the handle is stored there.
-                // GPUI tray events carry no identity: one handler serves the one
-                // tray, registered together with its creation.
+        #[cfg(target_os = "macos")]
+        {
+            // macOS embedded mode owns the app on this thread, so `with_app`
+            // can return the creation result directly. A UI-thread channel
+            // would deadlock here; threaded platforms use one below.
+            let created = with_app(move |cx| {
+                // Runs while the app is pumped on this same thread, so the
+                // handle is stored here. GPUI tray events carry no identity:
+                // one handler serves the one tray, registered together with
+                // its creation.
                 let tray = cx.create_tray(options);
                 let created = tray.is_some();
                 TRAY_HANDLE.with(|stored| *stored.borrow_mut() = tray);
-                response.send(created).ok();
-            })
-            .is_err()
+                created
+            })?;
+            if !created {
+                TRAY_CREATED.store(false, std::sync::atomic::Ordering::Release);
+            }
+            return Ok(created);
+        }
+        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
         {
-            TRAY_CREATED.store(false, std::sync::atomic::Ordering::Release);
-            return Ok(false);
+            // Threaded mode: the closure runs on the `gpuix-ui` thread, so a
+            // bounded channel returns the result to this thread.
+            let (response, receiver) = sync_channel(1);
+            // `update_app` returning Err must not leave `TRAY_CREATED` set, or a
+            // failed first call would block every later one.
+            if self
+                .update_app(move |cx| {
+                    // Runs on the GPUI app/UI thread, so the handle is stored there.
+                    // GPUI tray events carry no identity: one handler serves the one
+                    // tray, registered together with its creation.
+                    let tray = cx.create_tray(options);
+                    let created = tray.is_some();
+                    TRAY_HANDLE.with(|stored| *stored.borrow_mut() = tray);
+                    response.send(created).ok();
+                })
+                .is_err()
+            {
+                TRAY_CREATED.store(false, std::sync::atomic::Ordering::Release);
+                return Ok(false);
+            }
+            let created = recv_ui_response(receiver, "the tray creation")?;
+            if !created {
+                // No handle was stored; allow a later retry (for example on a
+                // platform whose backend reports a transient failure).
+                TRAY_CREATED.store(false, std::sync::atomic::Ordering::Release);
+            }
+            Ok(created)
         }
-        let created = recv_ui_response(receiver, "the tray creation")?;
-        if !created {
-            // No handle was stored; allow a later retry (for example on a
-            // platform whose backend reports a transient failure).
-            TRAY_CREATED.store(false, std::sync::atomic::Ordering::Release);
-        }
-        Ok(created)
     }
 
     /// Replace the tray item's menu. Flat: labels only, no submenus,
