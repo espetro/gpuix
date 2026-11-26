@@ -118,7 +118,7 @@ function main() {
         ? "arm64"
         : "x64",
       main: "index.js",
-      files: [nodeFile],
+      files: [nodeFile, "index.js"],
     };
     writeFileSync(
       join(dir, npmPackage, "index.js"),
