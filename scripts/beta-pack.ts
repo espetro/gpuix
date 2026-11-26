@@ -37,11 +37,14 @@ if (!REPO) {
 
 // Platform packages match packages/native/package.json napi.targets and
 // the optionalDependencies of the published @gpuix/native.
-const PLATFORMS: Array<{ target: string; npmPackage: string }> = [
-  { target: "aarch64-apple-darwin", npmPackage: "@gpuix/native-darwin-arm64" },
-  { target: "x86_64-unknown-linux-gnu", npmPackage: "@gpuix/native-linux-x64-gnu" },
-  { target: "x86_64-pc-windows-msvc", npmPackage: "@gpuix/native-win32-x64-msvc" },
-  { target: "aarch64-pc-windows-msvc", npmPackage: "@gpuix/native-win32-arm64-msvc" },
+// `file` is the napi npm-platform segment of the staged .node file name
+// (napi artifacts writes gpuix-native.darwin-arm64.node, not the rust
+// triple), while `target` keeps the rust triple for the stable asset name.
+const PLATFORMS: Array<{ target: string; fileTag: string; npmPackage: string }> = [
+  { target: "aarch64-apple-darwin", fileTag: "darwin-arm64", npmPackage: "@gpuix/native-darwin-arm64" },
+  { target: "x86_64-unknown-linux-gnu", fileTag: "linux-x64-gnu", npmPackage: "@gpuix/native-linux-x64-gnu" },
+  { target: "x86_64-pc-windows-msvc", fileTag: "win32-x64-msvc", npmPackage: "@gpuix/native-win32-x64-msvc" },
+  { target: "aarch64-pc-windows-msvc", fileTag: "win32-arm64-msvc", npmPackage: "@gpuix/native-win32-arm64-msvc" },
 ];
 
 function assetUrl(name: string): string {
@@ -90,8 +93,8 @@ function main() {
   const rewrittenOptional: Record<string, string> = {};
   const packed: Array<{ file: string; asset: string }> = [];
 
-  for (const { target, npmPackage } of PLATFORMS) {
-    const nodeFile = `${pkg.napi.binaryName}.${target}.node`;
+  for (const { target, fileTag, npmPackage } of PLATFORMS) {
+    const nodeFile = `${pkg.napi.binaryName}.${fileTag}.node`;
     if (!existsSync(nodeFile)) {
       throw new Error(`missing binary for ${target}: ${nodeFile}. Run \`napi artifacts\` first.`);
     }
