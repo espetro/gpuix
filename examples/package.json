@@ -15,7 +15,8 @@
     "timeline": "bun --hot timeline.tsx",
     "mail": "bun --hot mail.tsx",
     "compile": "bun compile-chat.ts",
-    "bench:serde": "bun bench-serialization.ts"
+    "bench:serde": "bun bench-serialization.ts",
+    "todo": "bun --hot todo.tsx"
   },
   "dependencies": {
     "@gpuix/react": "workspace:^",
