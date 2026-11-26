@@ -179,7 +179,7 @@ jobs:
       - name: Stage binaries
         working-directory: packages/native
         run: |
-          bunx napi artifacts --package-manager bun
+          bunx @napi-rs/cli artifacts
           ls -l *.node
 
       - name: Pack beta tarballs
