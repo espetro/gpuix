@@ -129,9 +129,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # build:web compiles gpuix-native for wasm32, and its gpui dependency
+      # is a path into the zed submodule, so the checkout needs it.
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive
 
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
