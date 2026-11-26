@@ -149,7 +149,7 @@ jobs:
 
       - name: Install nightly + wasm target + wasm-bindgen-cli
         run: |
-          rustup toolchain install nightly --profile minimal --target wasm32-unknown-unknown
+          rustup toolchain install nightly --profile minimal --component rust-src --target wasm32-unknown-unknown
           cargo install wasm-bindgen-cli --version 0.2.127
 
       - name: Install dependencies
