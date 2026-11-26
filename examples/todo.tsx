@@ -218,9 +218,17 @@ function TodoApp() {
     if (!created) return
 
     renderer.onTrayEvent?.(event => {
+      console.log('[todo tray event]', event)
       if (event.type === 'menuItem') {
         setLastTrayEvent(`menu:${event.id}`)
-        if (event.id === 'open') renderer.activateWindow?.()
+        if (event.id === 'open') {
+          try {
+            renderer.activateWindow?.()
+          } catch (error) {
+            console.error('[todo tray] activateWindow failed', error)
+            setLastTrayEvent('menu:open activate-error')
+          }
+        }
         if (event.id.startsWith('complete-')) {
           const id = Number(event.id.slice('complete-'.length))
           setTodos(current => current.map(todo => (todo.id === id ? { ...todo, done: true } : todo)))
@@ -237,7 +245,7 @@ function TodoApp() {
     }
   }, [renderer])
 
-  const activeTodos = todos.filter(todo => !todo.done)
+  const activeTodos = useMemo(() => todos.filter(todo => !todo.done), [todos])
   const activeCount = activeTodos.length
   const completedCount = todos.length - activeCount
   const counts = useMemo(
